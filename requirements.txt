@@ -1,0 +1,4 @@
+# EyeGuard runtime dependencies (Python 3.9+)
+pywin32>=306          # WMI brightness for the built-in laptop panel
+pystray>=0.19.5       # system tray icon
+Pillow>=10.0          # tray icon image rendering (pystray dependency)
