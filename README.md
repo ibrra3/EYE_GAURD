@@ -22,7 +22,7 @@ reduces blue light and eye strain.
 It runs quietly in the system tray, has a clean **dark-themed** settings window,
 and every behavior is toggleable and customizable.
 
-## ✨ Features
+##  Features
 
 - **Content-aware brightness** — samples the active window's average luminance
   and maps it to a target brightness with a smoothstep curve (no harsh jumps).
@@ -42,7 +42,7 @@ and every behavior is toggleable and customizable.
 - **Restores your settings on exit** — returns every display to its original
   brightness and clears the color tint.
 
-## 🚀 Installation
+##  Installation
 
 Requirements: **Windows 10/11** and **Python 3.9+** (tested on 3.13).
 
@@ -57,7 +57,7 @@ pip install -r requirements.txt
 > Dependencies: `pywin32` (WMI backlight), `pystray` (tray icon), `Pillow`
 > (icon rendering).
 
-## ▶️ Running
+##  Running
 
 ```powershell
 python main.py
@@ -75,7 +75,7 @@ An **eye-in-screen** icon appears in the system tray. Right-click it:
 | **Resume auto** | clears a manual brightness pin |
 | **Quit** | restores original brightness + neutral color, then exits |
 
-## ⚙️ Settings
+##  Settings
 
 | Tab | Options |
 | --- | --- |
@@ -85,7 +85,7 @@ An **eye-in-screen** icon appears in the system tray. Right-click it:
 | **Monitors** | read-only list of detected displays |
 | **App Rules** | add/edit/delete regex rules (name, match, brightness, eye protection) |
 
-## 🔧 Configuration file
+##  Configuration file
 
 Settings persist to `%APPDATA%\EyeGuard\config.json` (a previous `BrightFlow`
 config is migrated automatically). You can edit it directly while the app is
@@ -123,7 +123,7 @@ An app rule's `match` is a case-insensitive regex tested against
 `<process-path> <window-title>`. `brightness` is `"auto"` or a number 0–100.
 `eye_protection` is `null` (follow global), `true`, or `false`.
 
-## 🧠 How it works
+##  How it works
 
 - **Brightness** — external monitors use the DDC/CI physical-monitor API
   (`dxva2.dll`); the laptop panel uses a translucent click-through overlay
@@ -138,7 +138,7 @@ An app rule's `match` is a case-insensitive regex tested against
   the target from the active app and content. Video detection freezes the
   target while a video app/site is focused.
 
-## ❓ Troubleshooting
+##  Troubleshooting
 
 - **Laptop panel doesn't dim** → keep *"Overlay dimming for laptop panel"*
   enabled (it's on by default). This is the reliable path for dGPU/MUX laptops
@@ -151,7 +151,7 @@ An app rule's `match` is a case-insensitive regex tested against
 - **Warm tint missing on a secondary display** → a known Windows limitation;
   the tint applies to the primary display and, via overlay, the laptop panel.
 
-## 📦 Packaging (standalone .exe)
+##  Packaging (standalone .exe)
 
 ```powershell
 pip install pyinstaller
@@ -160,7 +160,7 @@ pyinstaller --noconsole --onefile --name EyeGuard main.py
 
 The `.exe` lands in `dist\`.
 
-## 🗂️ Project layout
+##  Project layout
 
 ```
 main.py                    entry point
@@ -181,6 +181,6 @@ tests/                     unit tests for the pure logic
 assets/                    logo
 ```
 
-## 📄 License
+##  License
 
 [MIT](LICENSE)
