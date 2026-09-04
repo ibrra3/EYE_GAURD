@@ -24,6 +24,33 @@ DEFAULTS: dict = {
     "enabled": True,               # master auto-adjust switch
     "interval_seconds": 1.5,       # how often to poll the active app + content
     "luma_sample_mode": "foreground",  # "foreground" or "fullscreen"
+    "mode": "morning",             # active comfort profile
+    "modes": {
+        "morning": {
+            "label": "Morning",
+            "description": "Natural daylight — subtle tint, full brightness range.",
+            "brightness": {"dark_target": 85, "bright_target": 40, "min": 10, "max": 100},
+            "eye_protection": {"always_on": False, "warmth": 40, "dim_percent": 10},
+        },
+        "evening": {
+            "label": "Evening",
+            "description": "Softer and warmer — reduced blue light and brightness.",
+            "brightness": {"dark_target": 75, "bright_target": 35, "min": 10, "max": 90},
+            "eye_protection": {"always_on": False, "warmth": 60, "dim_percent": 15},
+        },
+        "night": {
+            "label": "Night",
+            "description": "Strong warm filter, dimmer, eye protection always on.",
+            "brightness": {"dark_target": 60, "bright_target": 25, "min": 8, "max": 70},
+            "eye_protection": {"always_on": True, "warmth": 80, "dim_percent": 25},
+        },
+        "dark_room": {
+            "label": "Dark Room",
+            "description": "Maximum comfort in the dark — very dim and warm.",
+            "brightness": {"dark_target": 40, "bright_target": 15, "min": 5, "max": 50},
+            "eye_protection": {"always_on": True, "warmth": 100, "dim_percent": 35},
+        },
+    },
     "brightness": {
         "dark_target": 85,         # brightness when content is dark
         "bright_target": 40,       # brightness when content is bright/white
@@ -122,3 +149,18 @@ class Config:
     @property
     def rules(self) -> list:
         return self.data["app_rules"]
+
+    @property
+    def modes(self) -> dict:
+        return self.data["modes"]
+
+    def apply_mode(self, name: str) -> bool:
+        """Apply a comfort profile's overrides to brightness + eye protection."""
+        preset = self.data.get("modes", {}).get(name)
+        if not preset:
+            return False
+        self.brightness.update(preset.get("brightness", {}))
+        self.eye.update(preset.get("eye_protection", {}))
+        self.data["mode"] = name
+        self.save()
+        return True

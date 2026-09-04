@@ -36,6 +36,7 @@ class TrayIcon:
         return pystray.Menu(
             pystray.MenuItem("Open Settings", self._open_settings, default=True),
             pystray.MenuItem("Test laptop dim", self._quick_test),
+            pystray.MenuItem("Mode", self._mode_menu()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Auto-adjust brightness",
@@ -63,6 +64,36 @@ class TrayIcon:
 
     def _quick_test(self, icon, item):
         self.engine.quick_test()
+
+    def _mode_menu(self):
+        import pystray
+
+        return pystray.Menu(
+            self._mode_item("Morning", "morning"),
+            self._mode_item("Evening", "evening"),
+            self._mode_item("Night", "night"),
+            self._mode_item("Dark Room", "dark_room"),
+        )
+
+    def _mode_item(self, label, key):
+        import pystray
+
+        def _action(icon, item):
+            self._set_mode(key)
+
+        def _checked(item):
+            return self.config.data.get("mode") == key
+
+        return pystray.MenuItem(
+            label,
+            _action,
+            radio=True,
+            checked=_checked,
+        )
+
+    def _set_mode(self, key):
+        if self.config.apply_mode(key):
+            self.engine.refresh_outputs()
 
     def _toggle_enabled(self, icon, item):
         self.config.data["enabled"] = not bool(self.config.data.get("enabled", True))

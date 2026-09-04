@@ -184,6 +184,7 @@ class SettingsWindow:
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=12, pady=(2, 6))
+        self._build_mode(nb)
         self._build_general(nb)
         self._build_brightness(nb)
         self._build_eye(nb)
@@ -208,6 +209,62 @@ class SettingsWindow:
         ttk.Button(
             footer, text="Apply & Save", style="Accent.TButton", command=self._save
         ).pack(side="right")
+
+    def _build_mode(self, nb) -> None:
+        f = ttk.Frame(nb, padding=14)
+        nb.add(f, text="Mode")
+
+        ttk.Label(
+            f,
+            text="Pick a comfort profile — it tunes brightness and eye protection together.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 4))
+
+        self.mode_desc = ttk.Label(
+            f, text="", foreground=ACCENT, wraplength=580, justify="left"
+        )
+        self.mode_desc.pack(anchor="w", pady=(0, 12))
+
+        self.mode_var = tk.StringVar(value=self.config.data.get("mode", "morning"))
+        for key, preset in self.config.modes.items():
+            row = ttk.Frame(f)
+            row.pack(fill="x", pady=5)
+            ttk.Radiobutton(
+                row,
+                text=preset.get("label", key),
+                variable=self.mode_var,
+                value=key,
+                command=lambda k=key: self._apply_mode(k),
+            ).pack(side="left", anchor="w")
+            ttk.Label(
+                row, text=preset.get("description", ""), style="Muted.TLabel"
+            ).pack(side="left", padx=10, anchor="w")
+
+        self._update_mode_desc()
+
+    def _apply_mode(self, name: str) -> None:
+        if not self.config.apply_mode(name):
+            return
+        self.engine.refresh_outputs()
+        self._sync_vars_from_config()
+        self._update_mode_desc()
+
+    def _sync_vars_from_config(self) -> None:
+        b = self.config.brightness
+        e = self.config.eye
+        self.dark_var.set(b.get("dark_target", 85))
+        self.bright_var.set(b.get("bright_target", 40))
+        self.min_var.set(b.get("min", 10))
+        self.max_var.set(b.get("max", 100))
+        self.warmth_var.set(e.get("warmth", 60))
+        self.dim_var.set(e.get("dim_percent", 15))
+        self.eye_always_var.set(bool(e.get("always_on", False)))
+        self.mode_var.set(self.config.data.get("mode", "morning"))
+
+    def _update_mode_desc(self) -> None:
+        name = self.mode_var.get()
+        preset = self.config.modes.get(name, {})
+        self.mode_desc.configure(text=preset.get("description", ""))
 
     def _build_general(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
@@ -529,6 +586,10 @@ class SettingsWindow:
         self.config.save()
 
     def _refresh_status(self) -> None:
+        current_mode = self.config.data.get("mode")
+        if self.mode_var.get() != current_mode:
+            self.mode_var.set(current_mode)
+            self._update_mode_desc()
         s = self.engine.snapshot()
         app = s.get("app") or ""
         app_short = app.split("\\")[-1].split("/")[-1] if app else "—"

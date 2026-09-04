@@ -108,6 +108,11 @@ class Engine:
             self._manual_brightness = None
             self._manual_app = None
 
+    def refresh_outputs(self) -> None:
+        """Force the next tick to re-apply the current brightness/eye state."""
+        self._last_applied_brightness = None
+        self._last_eye_active = None
+
     def snapshot(self) -> dict:
         with self._lock:
             return dict(self.state)
