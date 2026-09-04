@@ -138,6 +138,20 @@ An app rule's `match` is a case-insensitive regex tested against
   the target from the active app and content. Video detection freezes the
   target while a video app/site is focused.
 
+
+## NEW COMFORT MODES !! 
+
+Four one-click profiles tune brightness and eye protection together — no
+scheduling required:
+
+| Mode | Feel |
+| --- | --- |
+| **Morning** | Natural daylight — subtle tint, full brightness range |
+| **Evening** | Softer and warmer — reduced blue light and brightness |
+| **Night** | Strong warm filter, dimmer, eye protection always on |
+| **Dark Room** | Maximum comfort in the dark — very dim and warm |
+
+
 ##  Troubleshooting
 
 - **Laptop panel doesn't dim** → keep *"Overlay dimming for laptop panel"*
