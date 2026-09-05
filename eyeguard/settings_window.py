@@ -1,18 +1,23 @@
 """Tkinter settings window for EyeGuard (dark theme).
 
-Runs on the main thread; the tray icon runs in its own thread. The tray
-signals the window to show/quit via a thread-safe command queue, and the
-window polls the engine state to refresh a live status bar.
+Runs on the main thread; the tray icon runs in its own thread. The tray signals
+the window to show/quit via a thread-safe command queue, and the window polls
+the engine state to refresh a live status bar.
+
+A display selector at the top chooses which profile you are editing:
+
+* "All displays (linked)" — one shared profile for every display;
+* a specific display — an independent profile for that display only.
 """
 
 from __future__ import annotations
 
-import os
+import json
 import queue
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from . import APP_NAME, TAGLINE
+from . import APP_NAME, TAGLINE, autostart
 from .icon import build_icon
 
 # palette
@@ -31,10 +36,11 @@ class SettingsWindow:
         self.config = config
         self.engine = engine
         self._cmd: "queue.Queue[str]" = queue.Queue()
+        self.edit_device: str | None = None  # None = shared (linked) profile
 
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} Settings")
-        self.root.geometry("660x620")
+        self.root.geometry("700x640")
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
 
@@ -160,13 +166,11 @@ class SettingsWindow:
             "Horizontal.TScale", background=BG, troughcolor=PANEL,
             bordercolor=PANEL, lightcolor=ACCENT, darkcolor=ACCENT,
         )
-        style.configure(
-            "Vertical.TScale", background=BG, troughcolor=PANEL,
-        )
+        style.configure("Vertical.TScale", background=BG, troughcolor=PANEL)
 
     # ---- UI construction -------------------------------------------------
     def _build(self) -> None:
-        header = ttk.Frame(self.root, padding=(16, 14, 16, 6))
+        header = ttk.Frame(self.root, padding=(16, 14, 16, 4))
         header.pack(fill="x")
 
         try:
@@ -182,10 +186,24 @@ class SettingsWindow:
         ttk.Label(title_box, text=APP_NAME, style="Header.TLabel").pack(anchor="w")
         ttk.Label(title_box, text=TAGLINE, style="Tagline.TLabel").pack(anchor="w")
 
+        # display selector
+        selector = ttk.Frame(self.root, padding=(16, 6, 16, 8))
+        selector.pack(fill="x")
+        ttk.Label(selector, text="Editing:").pack(side="left", padx=(0, 8))
+        self.target_var = tk.StringVar()
+        self.target_combo = ttk.Combobox(
+            selector, textvariable=self.target_var, state="readonly", width=28
+        )
+        self.target_combo.pack(side="left")
+        self.target_combo.bind("<<ComboboxSelected>>", self._on_target_changed)
+        self.target_hint = ttk.Label(selector, text="", style="Muted.TLabel")
+        self.target_hint.pack(side="left", padx=12)
+
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=12, pady=(2, 6))
         self._build_mode(nb)
         self._build_general(nb)
+        self._build_system(nb)
         self._build_brightness(nb)
         self._build_eye(nb)
         self._build_monitors(nb)
@@ -203,13 +221,65 @@ class SettingsWindow:
         footer.pack(fill="x")
         ttk.Label(
             footer,
-            text="Changes apply immediately and are saved to config.json.",
+            text="Pick a display above to edit it independently, or keep them linked.",
             style="Muted.TLabel",
         ).pack(side="left", anchor="s", pady=(0, 2))
         ttk.Button(
             footer, text="Apply & Save", style="Accent.TButton", command=self._save
         ).pack(side="right")
 
+        self._refresh_target_options()
+        self._load_target_into_vars()
+
+    # ---- display selector ------------------------------------------------
+    def _refresh_target_options(self) -> None:
+        self._target_options = [("All displays (linked)", None)]
+        for m in self.engine.brightness.monitors:
+            self._target_options.append((m.name or m.device, m.device))
+        self.target_combo["values"] = [label for label, _ in self._target_options]
+        self._select_target(self.edit_device)
+
+    def _select_target(self, device) -> None:
+        for label, dev in self._target_options:
+            if dev == device:
+                self.target_var.set(label)
+                return
+        self.target_var.set(self._target_options[0][0])
+
+    def _on_target_changed(self, _event=None) -> None:
+        label = self.target_var.get()
+        for lbl, dev in self._target_options:
+            if lbl == label:
+                self.edit_device = dev
+                break
+        self.config.set_link_displays(self.edit_device is None)
+        self.engine.refresh_outputs()
+        self._load_target_into_vars()
+
+    def _load_target_into_vars(self) -> None:
+        b = self.config.brightness_for(self.edit_device)
+        e = self.config.eye_for(self.edit_device)
+        self.dark_var.set(b.get("dark_target", 85))
+        self.bright_var.set(b.get("bright_target", 40))
+        self.min_var.set(b.get("min", 10))
+        self.max_var.set(b.get("max", 100))
+        self.eye_enabled_var.set(bool(e.get("enabled", True)))
+        self.eye_always_var.set(bool(e.get("always_on", False)))
+        self.eye_auto_var.set(bool(e.get("auto_trigger_white", True)))
+        self.warmth_var.set(e.get("warmth", 60))
+        self.dim_var.set(e.get("dim_percent", 15))
+        self.white_thresh_var.set(e.get("white_luma_threshold", 200))
+        self.profile_var.set(self.config.mode_for(self.edit_device))
+        self._update_mode_desc()
+        self._update_target_hint()
+
+    def _update_target_hint(self) -> None:
+        if self.edit_device is None:
+            self.target_hint.configure(text="Linked — one profile for all displays")
+        else:
+            self.target_hint.configure(text="Independent profile for this display")
+
+    # ---- mode tab --------------------------------------------------------
     def _build_mode(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="Mode")
@@ -225,14 +295,14 @@ class SettingsWindow:
         )
         self.mode_desc.pack(anchor="w", pady=(0, 12))
 
-        self.mode_var = tk.StringVar(value=self.config.data.get("mode", "morning"))
+        self.profile_var = tk.StringVar(value="morning")
         for key, preset in self.config.modes.items():
             row = ttk.Frame(f)
             row.pack(fill="x", pady=5)
             ttk.Radiobutton(
                 row,
                 text=preset.get("label", key),
-                variable=self.mode_var,
+                variable=self.profile_var,
                 value=key,
                 command=lambda k=key: self._apply_mode(k),
             ).pack(side="left", anchor="w")
@@ -243,29 +313,17 @@ class SettingsWindow:
         self._update_mode_desc()
 
     def _apply_mode(self, name: str) -> None:
-        if not self.config.apply_mode(name):
+        if not self.config.apply_mode(name, self.edit_device):
             return
         self.engine.refresh_outputs()
-        self._sync_vars_from_config()
-        self._update_mode_desc()
-
-    def _sync_vars_from_config(self) -> None:
-        b = self.config.brightness
-        e = self.config.eye
-        self.dark_var.set(b.get("dark_target", 85))
-        self.bright_var.set(b.get("bright_target", 40))
-        self.min_var.set(b.get("min", 10))
-        self.max_var.set(b.get("max", 100))
-        self.warmth_var.set(e.get("warmth", 60))
-        self.dim_var.set(e.get("dim_percent", 15))
-        self.eye_always_var.set(bool(e.get("always_on", False)))
-        self.mode_var.set(self.config.data.get("mode", "morning"))
+        self._load_target_into_vars()
 
     def _update_mode_desc(self) -> None:
-        name = self.mode_var.get()
+        name = self.profile_var.get()
         preset = self.config.modes.get(name, {})
         self.mode_desc.configure(text=preset.get("description", ""))
 
+    # ---- general tab (global) -------------------------------------------
     def _build_general(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="General")
@@ -280,17 +338,17 @@ class SettingsWindow:
         )
         self._slider(f, 1, "Poll interval (sec)", self.interval_var, 0.5, 10.0)
 
-        self.mode_var = tk.StringVar(
+        self.sample_var = tk.StringVar(
             value=self.config.data.get("luma_sample_mode", "foreground")
         )
         ttk.Label(f, text="Measure content from:").grid(
             row=2, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Radiobutton(
-            f, text="Active window", variable=self.mode_var, value="foreground"
+            f, text="Active window", variable=self.sample_var, value="foreground"
         ).grid(row=2, column=1, sticky="w", pady=(8, 0))
         ttk.Radiobutton(
-            f, text="Full screen", variable=self.mode_var, value="fullscreen"
+            f, text="Full screen", variable=self.sample_var, value="fullscreen"
         ).grid(row=3, column=1, sticky="w")
 
         self.step_var = tk.DoubleVar(
@@ -298,24 +356,31 @@ class SettingsWindow:
         )
         self._slider(f, 4, "Transition speed (%/sec)", self.step_var, 5.0, 200.0)
 
-        # video pause
+        self.software_var = tk.BooleanVar(
+            value=self.config.brightness.get("use_software_for_internal", True)
+        )
+        ttk.Checkbutton(
+            f,
+            text="Overlay dimming for laptop panel (for dGPU/MUX laptops)",
+            variable=self.software_var,
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
         vp = self.config.video_pause
         self.video_enabled_var = tk.BooleanVar(value=vp.get("enabled", True))
         ttk.Checkbutton(
             f, text="Pause auto-brightness while watching a video",
             variable=self.video_enabled_var,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
         ttk.Label(f, text="Video keywords (regex):").grid(
-            row=6, column=0, sticky="w", pady=(4, 0)
+            row=7, column=0, sticky="w", pady=(4, 0)
         )
         self.video_match_var = tk.StringVar(value=vp.get("match", ""))
         ttk.Entry(f, textvariable=self.video_match_var).grid(
-            row=6, column=1, columnspan=2, sticky="ew", pady=(4, 0)
+            row=7, column=1, columnspan=2, sticky="ew", pady=(4, 0)
         )
 
-        # manual override
         manual = ttk.LabelFrame(f, text="Manual override", padding=10)
-        manual.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        manual.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         self.manual_var = tk.DoubleVar(value=50)
         ttk.Label(
             manual, text="Manual brightness (pins until the app changes):"
@@ -328,14 +393,70 @@ class SettingsWindow:
     def _manual_changed(self) -> None:
         self.engine.set_manual_brightness(self.manual_var.get())
 
+    # ---- system tab (global) --------------------------------------------
+    def _build_system(self, nb) -> None:
+        f = ttk.Frame(nb, padding=14)
+        nb.add(f, text="System")
+
+        self.autostart_var = tk.BooleanVar(value=autostart.is_enabled())
+        ttk.Checkbutton(
+            f, text="Start with Windows", variable=self.autostart_var
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+
+        self.hotkeys_var = tk.BooleanVar(
+            value=self.config.data.get("hotkeys", {}).get("enabled", True)
+        )
+        ttk.Checkbutton(
+            f,
+            text="Hotkeys: Ctrl+Alt+E (eye) · Ctrl+Alt+M (mode) · Ctrl+Alt+B (brightness)",
+            variable=self.hotkeys_var,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        idle_cfg = self.config.data.get("idle", {})
+        self.idle_enabled_var = tk.BooleanVar(value=idle_cfg.get("enabled", False))
+        ttk.Checkbutton(
+            f, text="Dim when away (idle)", variable=self.idle_enabled_var
+        ).grid(row=2, column=0, columnspan=3, sticky="w")
+        self.idle_minutes_var = tk.DoubleVar(value=idle_cfg.get("minutes", 10))
+        self._slider(f, 3, "Idle after (min)", self.idle_minutes_var, 1, 120)
+        self.idle_dim_var = tk.DoubleVar(value=idle_cfg.get("dim_to", 25))
+        self._slider(f, 4, "Idle brightness (%)", self.idle_dim_var, 0, 100)
+
+        amb = self.config.data.get("ambient_light", {})
+        self.ambient_enabled_var = tk.BooleanVar(value=amb.get("enabled", False))
+        ttk.Checkbutton(
+            f, text="Use ambient light sensor (experimental)",
+            variable=self.ambient_enabled_var,
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.ambient_weight_var = tk.DoubleVar(value=amb.get("weight", 0.5))
+        self._slider(f, 6, "Ambient influence (0-1)", self.ambient_weight_var, 0.0, 1.0)
+
+        scfg = self.config.data.get("schedule", {})
+        self.schedule_enabled_var = tk.BooleanVar(value=scfg.get("enabled", False))
+        ttk.Checkbutton(
+            f, text="Auto-switch mode by schedule", variable=self.schedule_enabled_var
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(f, text="Entries (HH:MM=mode, comma-separated):").grid(
+            row=8, column=0, sticky="w", pady=(4, 0)
+        )
+        entries_text = ", ".join(
+            f"{e.get('time', '')}={e.get('mode', '')}"
+            for e in scfg.get("entries", [])
+        )
+        self.schedule_var = tk.StringVar(value=entries_text)
+        ttk.Entry(f, textvariable=self.schedule_var).grid(
+            row=8, column=1, columnspan=2, sticky="ew", pady=(4, 0)
+        )
+
+    # ---- brightness tab (per target) ------------------------------------
     def _build_brightness(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="Brightness")
 
-        self.dark_var = tk.DoubleVar(value=self.config.brightness.get("dark_target", 85))
-        self.bright_var = tk.DoubleVar(value=self.config.brightness.get("bright_target", 40))
-        self.min_var = tk.DoubleVar(value=self.config.brightness.get("min", 10))
-        self.max_var = tk.DoubleVar(value=self.config.brightness.get("max", 100))
+        self.dark_var = tk.DoubleVar(value=85)
+        self.bright_var = tk.DoubleVar(value=40)
+        self.min_var = tk.DoubleVar(value=10)
+        self.max_var = tk.DoubleVar(value=100)
 
         ttk.Label(
             f, text="Dark content → higher brightness; white content → lower.",
@@ -346,51 +467,42 @@ class SettingsWindow:
         self._slider(f, 3, "Minimum brightness", self.min_var, 0, 100)
         self._slider(f, 4, "Maximum brightness", self.max_var, 0, 100)
 
-        self.software_var = tk.BooleanVar(
-            value=self.config.brightness.get("use_software_for_internal", True)
-        )
-        ttk.Checkbutton(
-            f,
-            text="Overlay dimming for laptop panel (for dGPU/MUX laptops)",
-            variable=self.software_var,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
-
+    # ---- eye protection tab (per target) --------------------------------
     def _build_eye(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="Eye Protection")
 
-        self.eye_enabled_var = tk.BooleanVar(value=self.config.eye.get("enabled", True))
+        self.eye_enabled_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             f, text="Enable eye protection", variable=self.eye_enabled_var
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
-        self.eye_always_var = tk.BooleanVar(value=self.config.eye.get("always_on", False))
+        self.eye_always_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             f, text="Always on (ignore content)", variable=self.eye_always_var
         ).grid(row=1, column=0, columnspan=3, sticky="w")
 
-        self.eye_auto_var = tk.BooleanVar(value=self.config.eye.get("auto_trigger_white", True))
+        self.eye_auto_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             f, text="Auto-trigger on white/paper content", variable=self.eye_auto_var
         ).grid(row=2, column=0, columnspan=3, sticky="w")
 
-        self.warmth_var = tk.DoubleVar(value=self.config.eye.get("warmth", 60))
+        self.warmth_var = tk.DoubleVar(value=60)
         self._slider(f, 3, "Warmth (blue-light filter)", self.warmth_var, 0, 100)
 
-        self.dim_var = tk.DoubleVar(value=self.config.eye.get("dim_percent", 15))
+        self.dim_var = tk.DoubleVar(value=15)
         self._slider(f, 4, "Extra dim while active (%)", self.dim_var, 0, 90)
 
-        self.white_thresh_var = tk.DoubleVar(
-            value=self.config.eye.get("white_luma_threshold", 200)
-        )
+        self.white_thresh_var = tk.DoubleVar(value=200)
         self._slider(f, 5, "White-content threshold", self.white_thresh_var, 100, 255)
 
+    # ---- monitors tab ----------------------------------------------------
     def _build_monitors(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="Monitors")
         ttk.Label(
             f,
-            text="Detected displays (read-only). Empty selection = control all.",
+            text="Detected displays. Use the selector above to edit each one.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(0, 8))
         self.monitor_text = tk.Text(
@@ -399,10 +511,127 @@ class SettingsWindow:
             font=("Consolas", 10),
         )
         self.monitor_text.pack(fill="both", expand=True)
-        ttk.Button(f, text="Refresh", command=self._refresh_monitors).pack(
-            anchor="w", pady=8
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=8)
+        ttk.Button(btns, text="Refresh", command=self._refresh_monitors).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(btns, text="Copy current → all", command=self._copy_to_all).pack(
+            side="left", padx=6
+        )
+        ttk.Button(btns, text="Export profile…", command=self._export_profile).pack(
+            side="left", padx=6
+        )
+        ttk.Button(btns, text="Import profile…", command=self._import_profile).pack(
+            side="left", padx=6
         )
         self._refresh_monitors()
+
+    def _copy_to_all(self) -> None:
+        b = self.config.brightness_for(self.edit_device)
+        e = self.config.eye_for(self.edit_device)
+        self.config.brightness.update(
+            {
+                "dark_target": b.get("dark_target", 85),
+                "bright_target": b.get("bright_target", 40),
+                "min": b.get("min", 10),
+                "max": b.get("max", 100),
+            }
+        )
+        self.config.eye.update(
+            {
+                "enabled": e.get("enabled", True),
+                "always_on": e.get("always_on", False),
+                "auto_trigger_white": e.get("auto_trigger_white", True),
+                "warmth": e.get("warmth", 60),
+                "dim_percent": e.get("dim_percent", 15),
+                "white_luma_threshold": e.get("white_luma_threshold", 200),
+            }
+        )
+        self.config.data["per_monitor"] = {}
+        self.config.set_link_displays(True)
+        self.edit_device = None
+        self.config.save()
+        self.engine.refresh_outputs()
+        self._select_target(None)
+        self._load_target_into_vars()
+        messagebox.showinfo(APP_NAME, "Settings copied to all displays (linked).")
+
+    def _export_profile(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Export profile",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+            initialfile="eyeguard-profile.json",
+        )
+        if not path:
+            return
+        b = self.config.brightness_for(self.edit_device)
+        e = self.config.eye_for(self.edit_device)
+        data = {
+            "mode": self.config.mode_for(self.edit_device),
+            "brightness": {
+                "dark_target": b.get("dark_target"),
+                "bright_target": b.get("bright_target"),
+                "min": b.get("min"),
+                "max": b.get("max"),
+            },
+            "eye_protection": {
+                "enabled": e.get("enabled"),
+                "always_on": e.get("always_on"),
+                "auto_trigger_white": e.get("auto_trigger_white"),
+                "warmth": e.get("warmth"),
+                "dim_percent": e.get("dim_percent"),
+                "white_luma_threshold": e.get("white_luma_threshold"),
+            },
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, indent=2)
+            messagebox.showinfo(APP_NAME, f"Profile exported to {path}")
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Export failed: {exc}")
+
+    def _import_profile(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Import profile", filetypes=[("JSON", "*.json")]
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+        except (OSError, json.JSONDecodeError) as exc:
+            messagebox.showerror(APP_NAME, f"Import failed: {exc}")
+            return
+        b = data.get("brightness", {})
+        e = data.get("eye_protection", {})
+        self.config.set_brightness_values(
+            {
+                "dark_target": b.get("dark_target", 85),
+                "bright_target": b.get("bright_target", 40),
+                "min": b.get("min", 10),
+                "max": b.get("max", 100),
+            },
+            self.edit_device,
+        )
+        self.config.set_eye_values(
+            {
+                "enabled": e.get("enabled", True),
+                "always_on": e.get("always_on", False),
+                "auto_trigger_white": e.get("auto_trigger_white", True),
+                "warmth": e.get("warmth", 60),
+                "dim_percent": e.get("dim_percent", 15),
+                "white_luma_threshold": e.get("white_luma_threshold", 200),
+            },
+            self.edit_device,
+        )
+        if data.get("mode") in self.config.modes:
+            self.config.apply_mode(data["mode"], self.edit_device)
+        self.engine.refresh_outputs()
+        self._load_target_into_vars()
+        messagebox.showinfo(APP_NAME, "Profile imported.")
 
     def _refresh_monitors(self) -> None:
         try:
@@ -418,7 +647,9 @@ class SettingsWindow:
         self.monitor_text.delete("1.0", "end")
         self.monitor_text.insert("1.0", "\n".join(lines) or "No monitors detected.")
         self.monitor_text.configure(state="disabled")
+        self._refresh_target_options()
 
+    # ---- app rules tab ---------------------------------------------------
     def _build_rules(self, nb) -> None:
         f = ttk.Frame(nb, padding=14)
         nb.add(f, text="App Rules")
@@ -449,7 +680,9 @@ class SettingsWindow:
         self.rule_bright = ttk.Entry(form, width=18)
         self.rule_bright.insert(0, "auto")
         self.rule_bright.grid(row=1, column=1, sticky="w", padx=4)
-        ttk.Label(form, text="'auto' or 0-100").grid(row=1, column=2, sticky="w")
+        ttk.Label(form, text="'auto', 0-100, or 20-60 (range)").grid(
+            row=1, column=2, sticky="w"
+        )
 
         self.rule_eye = tk.StringVar(value="auto")
         ttk.Label(form, text="Eye protection:").grid(row=2, column=0, sticky="w", pady=4)
@@ -474,10 +707,12 @@ class SettingsWindow:
         for rule in self.config.rules:
             eye = rule.get("eye_protection")
             eye_txt = "auto" if eye is None else ("on" if eye else "off")
+            rb = rule.get("brightness", "auto")
+            rb_txt = f"{rb[0]}-{rb[1]}" if isinstance(rb, (list, tuple)) else rb
             self.rules_list.insert(
                 "end",
                 f"{rule.get('name','')}  |  {rule.get('match','')}  |  "
-                f"brightness={rule.get('brightness','auto')}  eye={eye_txt}",
+                f"brightness={rb_txt}  eye={eye_txt}",
             )
 
     def _rule_selected(self, _event=None) -> None:
@@ -490,7 +725,11 @@ class SettingsWindow:
         self.rule_match.delete(0, "end")
         self.rule_match.insert(0, rule.get("match", ""))
         self.rule_bright.delete(0, "end")
-        self.rule_bright.insert(0, str(rule.get("brightness", "auto")))
+        rb = rule.get("brightness", "auto")
+        if isinstance(rb, (list, tuple)):
+            self.rule_bright.insert(0, f"{rb[0]}-{rb[1]}")
+        else:
+            self.rule_bright.insert(0, str(rb))
         eye = rule.get("eye_protection")
         self.rule_eye.set("auto" if eye is None else ("on" if eye else "off"))
 
@@ -525,11 +764,11 @@ class SettingsWindow:
         if not match:
             messagebox.showwarning(APP_NAME, "Match pattern is required.")
             return None
-        try:
-            bright_val = float(bright) if bright.lower() != "auto" else "auto"
-        except ValueError:
+        bright_val = self._parse_rule_brightness(bright)
+        if bright_val is None:
             messagebox.showwarning(
-                APP_NAME, "Brightness must be 'auto' or a number 0-100."
+                APP_NAME,
+                "Brightness must be 'auto', a number 0-100, or a range like 20-60.",
             )
             return None
         eye = self.rule_eye.get()
@@ -541,6 +780,35 @@ class SettingsWindow:
             "brightness": bright_val,
             "eye_protection": eye_val,
         }
+
+    def _parse_rule_brightness(self, s: str):
+        s = s.strip().lower()
+        if s == "auto":
+            return "auto"
+        if "-" in s:
+            parts = s.split("-")
+            if len(parts) == 2:
+                try:
+                    return [float(parts[0]), float(parts[1])]
+                except ValueError:
+                    return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _parse_schedule(self, text: str) -> list:
+        entries = []
+        for part in text.split(","):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            t, mode = part.split("=", 1)
+            t = t.strip()
+            mode = mode.strip()
+            if t and mode in self.config.modes:
+                entries.append({"time": t, "mode": mode})
+        return entries
 
     # ---- helpers ---------------------------------------------------------
     def _slider(self, parent, row, label, var, from_, to) -> None:
@@ -559,51 +827,71 @@ class SettingsWindow:
         update(None)
 
     def _save(self) -> None:
-        b = self.config.brightness
-        b["dark_target"] = round(self.dark_var.get(), 1)
-        b["bright_target"] = round(self.bright_var.get(), 1)
-        b["min"] = round(self.min_var.get(), 1)
-        b["max"] = round(self.max_var.get(), 1)
-        b["max_step_per_sec"] = round(self.step_var.get(), 1)
-        b["use_software_for_internal"] = bool(self.software_var.get())
+        b_vals = {
+            "dark_target": round(self.dark_var.get(), 1),
+            "bright_target": round(self.bright_var.get(), 1),
+            "min": round(self.min_var.get(), 1),
+            "max": round(self.max_var.get(), 1),
+        }
+        e_vals = {
+            "enabled": bool(self.eye_enabled_var.get()),
+            "always_on": bool(self.eye_always_var.get()),
+            "auto_trigger_white": bool(self.eye_auto_var.get()),
+            "warmth": round(self.warmth_var.get(), 1),
+            "dim_percent": round(self.dim_var.get(), 1),
+            "white_luma_threshold": round(self.white_thresh_var.get(), 1),
+        }
+        self.config.set_brightness_values(b_vals, self.edit_device)
+        self.config.set_eye_values(e_vals, self.edit_device)
 
-        e = self.config.eye
-        e["enabled"] = bool(self.eye_enabled_var.get())
-        e["always_on"] = bool(self.eye_always_var.get())
-        e["auto_trigger_white"] = bool(self.eye_auto_var.get())
-        e["warmth"] = round(self.warmth_var.get(), 1)
-        e["dim_percent"] = round(self.dim_var.get(), 1)
-        e["white_luma_threshold"] = round(self.white_thresh_var.get(), 1)
-
+        # global settings (always shared)
+        self.config.brightness["max_step_per_sec"] = round(self.step_var.get(), 1)
+        self.config.brightness["use_software_for_internal"] = bool(
+            self.software_var.get()
+        )
         vp = self.config.video_pause
         vp["enabled"] = bool(self.video_enabled_var.get())
         vp["match"] = self.video_match_var.get().strip()
-
         self.config.data["enabled"] = bool(self.enabled_var.get())
         self.config.data["interval_seconds"] = round(self.interval_var.get(), 2)
-        self.config.data["luma_sample_mode"] = self.mode_var.get()
+        self.config.data["luma_sample_mode"] = self.sample_var.get()
+
+        # system settings
+        self.config.data["hotkeys"] = {"enabled": bool(self.hotkeys_var.get())}
+        idle = self.config.data.setdefault("idle", {})
+        idle["enabled"] = bool(self.idle_enabled_var.get())
+        idle["minutes"] = round(self.idle_minutes_var.get(), 1)
+        idle["dim_to"] = round(self.idle_dim_var.get(), 1)
+        amb = self.config.data.setdefault("ambient_light", {})
+        amb["enabled"] = bool(self.ambient_enabled_var.get())
+        amb["weight"] = round(self.ambient_weight_var.get(), 2)
+        scfg = self.config.data.setdefault("schedule", {})
+        scfg["enabled"] = bool(self.schedule_enabled_var.get())
+        scfg["entries"] = self._parse_schedule(self.schedule_var.get())
+        autostart.set_enabled(bool(self.autostart_var.get()))
 
         self.config.save()
+        self.engine.refresh_outputs()
 
     def _refresh_status(self) -> None:
-        current_mode = self.config.data.get("mode")
-        if self.mode_var.get() != current_mode:
-            self.mode_var.set(current_mode)
-            self._update_mode_desc()
         s = self.engine.snapshot()
         app = s.get("app") or ""
         app_short = app.split("\\")[-1].split("/")[-1] if app else "—"
         lum = s.get("luminance")
         lum_txt = f"{lum:.0f}" if lum is not None else "—"
-        bright = s.get("brightness")
-        bright_txt = f"{bright}%" if bright is not None else "—"
-        target = s.get("target")
-        target_txt = f"{target:.0f}%" if target is not None else "—"
-        eye = "ON" if s.get("eye_protection") else "off"
+        linked = "linked" if s.get("linked") else "per-display"
+        monitors = s.get("monitors") or []
+        mon_bits = []
+        for m in monitors:
+            short = (m.get("name") or m.get("device") or "?").split("\\")[-1]
+            b = m.get("brightness")
+            btxt = f"{b}%" if b is not None else "—"
+            warm = " warm" if m.get("eye") else ""
+            mon_bits.append(f"{short} {btxt}{warm}")
+        mon_txt = "  •  ".join(mon_bits) if mon_bits else "—"
         video = "paused" if s.get("video") else "off"
         text = (
-            f"App: {app_short}   •   Luminance: {lum_txt}   •   "
-            f"Brightness: {bright_txt} (target {target_txt})   •   "
-            f"Eye protection: {eye}   •   Video pause: {video}"
+            f"App: {app_short}   •   Lum: {lum_txt}   •   [{linked}]   •   "
+            f"{mon_txt}   •   Video: {video}"
         )
         self.status_bar.configure(text=text)

@@ -24,7 +24,21 @@ DEFAULTS: dict = {
     "enabled": True,               # master auto-adjust switch
     "interval_seconds": 1.5,       # how often to poll the active app + content
     "luma_sample_mode": "foreground",  # "foreground" or "fullscreen"
-    "mode": "morning",             # active comfort profile
+    "link_displays": True,         # True = all displays share one profile
+    "per_monitor": {},             # {device: {"brightness": {...}, "eye_protection": {...}, "mode": "..."}}
+    "hotkeys": {"enabled": True},  # Ctrl+Alt+E (eye) / M (mode) / B (brightness)
+    "idle": {"enabled": False, "minutes": 10, "dim_to": 25},
+    "ambient_light": {
+        "enabled": False,          # blend the light sensor with screen content
+        "weight": 0.5,             # 0..1; how much ambient light influences
+        "refresh_seconds": 30,
+        "max_lux": 1000,           # lux mapped to "full brightness"
+    },
+    "schedule": {
+        "enabled": False,
+        "entries": [],             # [{"time": "19:00", "mode": "night"}, ...]
+    },
+    "mode": "morning",             # active comfort profile (shared)
     "modes": {
         "morning": {
             "label": "Morning",
@@ -154,13 +168,77 @@ class Config:
     def modes(self) -> dict:
         return self.data["modes"]
 
-    def apply_mode(self, name: str) -> bool:
-        """Apply a comfort profile's overrides to brightness + eye protection."""
+    @property
+    def link_displays(self) -> bool:
+        return bool(self.data.get("link_displays", True))
+
+    def set_link_displays(self, linked: bool) -> None:
+        self.data["link_displays"] = bool(linked)
+        self.save()
+
+    def _override(self, device: str) -> dict:
+        """Return (creating if needed) the per-monitor override for *device*."""
+        pm = self.data.setdefault("per_monitor", {})
+        return pm.setdefault(device, {})
+
+    def brightness_for(self, device: str | None) -> dict:
+        """Effective brightness settings for a monitor (shared + override)."""
+        base = self.brightness
+        if device is None or self.link_displays:
+            return base
+        ov = self.data.get("per_monitor", {}).get(device, {})
+        if not ov.get("brightness"):
+            return base
+        merged = dict(base)
+        merged.update(ov["brightness"])
+        return merged
+
+    def eye_for(self, device: str | None) -> dict:
+        """Effective eye-protection settings for a monitor."""
+        base = self.eye
+        if device is None or self.link_displays:
+            return base
+        ov = self.data.get("per_monitor", {}).get(device, {})
+        if not ov.get("eye_protection"):
+            return base
+        merged = dict(base)
+        merged.update(ov["eye_protection"])
+        return merged
+
+    def mode_for(self, device: str | None) -> str:
+        if device is not None and not self.link_displays:
+            ov = self.data.get("per_monitor", {}).get(device, {})
+            if ov.get("mode"):
+                return ov["mode"]
+        return self.data.get("mode", "morning")
+
+    def set_brightness_values(self, values: dict, device: str | None = None) -> None:
+        if device is None:
+            self.brightness.update(values)
+        else:
+            self._override(device).setdefault("brightness", {}).update(values)
+        self.save()
+
+    def set_eye_values(self, values: dict, device: str | None = None) -> None:
+        if device is None:
+            self.eye.update(values)
+        else:
+            self._override(device).setdefault("eye_protection", {}).update(values)
+        self.save()
+
+    def apply_mode(self, name: str, device: str | None = None) -> bool:
+        """Apply a comfort profile to the shared profile or a single display."""
         preset = self.data.get("modes", {}).get(name)
         if not preset:
             return False
-        self.brightness.update(preset.get("brightness", {}))
-        self.eye.update(preset.get("eye_protection", {}))
-        self.data["mode"] = name
+        if device is None:
+            self.brightness.update(preset.get("brightness", {}))
+            self.eye.update(preset.get("eye_protection", {}))
+            self.data["mode"] = name
+        else:
+            ov = self._override(device)
+            ov.setdefault("brightness", {}).update(preset.get("brightness", {}))
+            ov.setdefault("eye_protection", {}).update(preset.get("eye_protection", {}))
+            ov["mode"] = name
         self.save()
         return True

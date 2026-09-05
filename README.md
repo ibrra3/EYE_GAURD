@@ -147,7 +147,7 @@ scheduling required:
 | Mode | Feel |
 | --- | --- |
 | **Morning** | Natural daylight — subtle tint, full brightness range |
-| **Evening** | Softer and warmer — reduced blue light and brightness |
+| **Evening** | Softer and warmer — reduced blue light and brightnessv  |
 | **Night** | Strong warm filter, dimmer, eye protection always on |
 | **Dark Room** | Maximum comfort in the dark — very dim and warm |
 

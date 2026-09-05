@@ -18,9 +18,12 @@ class TrayIcon:
     def start(self) -> None:
         import pystray
 
+        from .notify import set_callback
+
         self._icon = pystray.Icon(
             "eyeguard", build_icon(64), "EyeGuard", self._menu()
         )
+        set_callback(self.notify)
         self._thread = threading.Thread(
             target=self._icon.run, name="eyeguard-tray", daemon=True
         )
@@ -29,6 +32,13 @@ class TrayIcon:
     def stop(self) -> None:
         if self._icon:
             self._icon.stop()
+
+    def notify(self, title: str, message: str) -> None:
+        if self._icon:
+            try:
+                self._icon.notify(message, title)
+            except Exception:
+                pass
 
     def _menu(self):
         import pystray

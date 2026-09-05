@@ -171,6 +171,20 @@ class BrightnessController:
             for m in self.monitors
         ]
 
+    def list_devices(self) -> set:
+        """Cheaply enumerate attached display device names (no DDC/CI I/O)."""
+        devices: set[str] = set()
+
+        def cb(hmonitor, hdc, lprect, lparam) -> bool:
+            info = MONITORINFOEXW()
+            info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+            if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+                devices.add(info.szDevice)
+            return True
+
+        user32.EnumDisplayMonitors(None, None, MonitorEnumProc(cb), 0)
+        return devices
+
     # ---- WMI (built-in laptop panel) -------------------------------------
     @staticmethod
     def _wmi_set(value: int) -> bool:
